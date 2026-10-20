@@ -5006,16 +5006,74 @@ function formUser(id) {
       <div class="flex justify-end gap-2 pt-4 border-t"><button onclick="closeModal()" class="px-4 py-2 border rounded-lg">Cancelar</button><button onclick="saveUser('${id||''}')" class="bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2 rounded-lg font-medium"><i class="fas fa-save mr-1"></i>Guardar</button></div>
     </div>`);
 }
-function saveUser(id) {
-  const data = getFormData('formUser', ['full_name','email','role']);
-  if (!data) return;
-  if (!id && !data.password) { toast('Contraseña obligatoria','error'); return; }
-  const permisos = {};
-  MODULES.forEach(m => { const cb = document.querySelector(`[name="perm_${m.id}"]`); if (cb) permisos[m.id] = cb.checked; });
-  if (id) { const idx = appUsers.findIndex(x=>x.id===id); if (idx>=0) { appUsers[idx] = { ...appUsers[idx], full_name: data.full_name, email: data.email, role: data.role, activo: data.activo === true || data.activo === 'on', permisos }; if (data.password) appUsers[idx].password = data.password; } }
-  else { appUsers.push({ id: uid(), full_name: data.full_name, email: data.email, password: data.password, role: data.role, activo: data.activo === true || data.activo === 'on', permisos, created_at: today() }); }
-  saveUsers(); closeModal(); toast('Usuario guardado'); refreshCurrent();
+
+
+async function saveUser() {
+  console.log("🔍 [1] saveUser iniciado");
+  
+  const data = getFormData('formUser', ['email', 'password']);
+  console.log("🔍 [2] Datos obtenidos del formulario:", data);
+  
+  if (!data) {
+    console.log("⚠️ [3] getFormData devolvió vacío. Saliendo.");
+    return;
+  }
+
+  // Validar email único (buscamos en el array local actual)
+  const existente = appUsers.find(u => u.email.toLowerCase() === data.email.toLowerCase());
+  if (existente) {
+    console.log("⚠️ [4] El email ya existe en appUsers. Saliendo.");
+    toast('El email ya está registrado', 'error');
+    return;
+  }
+
+  console.log("🔍 [5] Creando objeto newUser...");
+  const newUser = {
+    id: uid(),
+    email: data.email.toLowerCase(),
+    password: data.password,
+    full_name: data.full_name || data.email.split('@')[0],
+    role: data.role || 'user',
+    // Para checkboxes, a veces getFormData falla, leemos directo del DOM por seguridad
+    activo: document.getElementById('chkActivo') ? document.getElementById('chkActivo').checked : (data.activo !== false),
+    permisos: typeof getDefaultPerms === 'function' ? getDefaultPerms() : {},
+    created_at: new Date().toISOString()
+  };
+  console.log("🔍 [6] Objeto newUser creado:", newUser);
+
+  console.log("🔍 [7] Actualizando estado local (appUsers.push)...");
+  appUsers.push(newUser);
+  saveUsers(); // Guarda en localStorage
+
+  console.log("🔍 [8] Verificando modo de base de datos. dbMode actual es:", dbMode);
+  
+  if (dbMode === 'supabase' && typeof supabaseClient !== 'undefined') {
+    console.log("🔍 [9] dbMode es 'supabase'. Intentando DB.insert...");
+    try {
+      const res = await DB.insert('app_users', newUser);
+      console.log("🔍 [10] Respuesta de DB.insert:", res);
+      
+      if (res.error) {
+        console.error('❌ [11] Error de Supabase:', res.error);
+        toast('Usuario guardado localmente, pero falló en la nube: ' + res.error.message, 'warning');
+      } else {
+        console.log("✅ [12] ¡Guardado en Supabase exitoso!");
+        toast('Usuario guardado en la nube ✓', 'success');
+      }
+    } catch (e) {
+      console.error('❌ [13] Excepción no capturada en DB.insert:', e);
+      toast('Error inesperado al conectar con la nube', 'error');
+    }
+  } else {
+    console.warn("⚠️ [14] NO se intentó guardar en Supabase. Motivo: dbMode es '" + dbMode + "' o supabaseClient no existe.");
+    toast('Guardado SOLO en el navegador (Modo: ' + dbMode + ')', 'warning');
+  }
+
+  console.log("🔍 [15] Cerrando modal y refrescando pantalla...");
+  closeModal();
+  refreshCurrent();
 }
+
 function toggleUserStatus(id) { const u = appUsers.find(x=>x.id===id); if (!u) return; if (u.id === currentUser.id) { toast('No puede desactivar su propia sesión','error'); return; } u.activo = !u.activo; saveUsers(); toast(u.activo ? 'Usuario activado' : 'Usuario desactivado'); refreshCurrent(); }
 function delUser(id) { if (id === currentUser.id) { toast('No puede eliminar su propia cuenta','error'); return; } if (id === 'admin-default') { toast('No puede eliminar el admin principal','error'); return; } if (!confirm('¿Eliminar?')) return; appUsers = appUsers.filter(x=>x.id!==id); saveUsers(); toast('Usuario eliminado'); refreshCurrent(); }
 function verPermisos(id) {
