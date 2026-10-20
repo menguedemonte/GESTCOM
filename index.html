@@ -1800,15 +1800,33 @@ cuentas_corrientes: (r) => ({ id: r.id, tipo: r.tipo, entity_id: r.entityId || r
   caja_imputaciones: (r) => ({ id: r.id, movimiento_id: r.movimientoId || r.movimiento_id, comprobante_id: r.comprobanteId || r.comprobante_id, importe_imputado: parseFloat(r.importeImputado) || 0, fecha: r.fecha || null, usuario: r.usuario || null })
 };
 
-
 const DB = {
   async init(url, key) {
     if (!url || !key) { dbMode = 'local'; updateDbStatus(); return false; }
     const ok = await loadSupabaseSDK();
     if (!ok || !window.supabase) { dbMode = 'local'; updateDbStatus(); return false; }
-    try { supabaseClient = window.supabase.createClient(url, key); dbMode = 'supabase'; updateDbStatus(); return true; } catch(e) { dbMode = 'local'; updateDbStatus(); return false; }
-  },
+    try {
+      // ⚠️ Debe ser EXACTAMENTE igual al valor del SQL en Supabase
+      const APP_SECRET = 'GDeXycQHyZMWLfu5MBrT';
 
+      supabaseClient = window.supabase.createClient(url, key, {
+        global: {
+          headers: {
+            'x-app-secret': APP_SECRET
+          }
+        }
+      });
+
+      dbMode = 'supabase';
+      updateDbStatus();
+      return true;
+    } catch(e) {
+      console.error('[DB.init] Error creando cliente:', e);
+      dbMode = 'local';
+      updateDbStatus();
+      return false;
+    }
+  },
  
 async insert(table, record) {
   if (dbMode !== 'supabase') return { data: [record] };
