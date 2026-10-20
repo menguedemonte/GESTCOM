@@ -1798,6 +1798,7 @@ cuentas_corrientes: (r) => ({ id: r.id, tipo: r.tipo, entity_id: r.entityId || r
   movimientos_inventario: (r) => ({ id: r.id, tipo: r.tipo, producto_id: r.productoId || r.producto_id || null, cantidad: parseFloat(r.cantidad)||0, costo_unit: parseFloat(r.costoUnit !== undefined ? r.costoUnit : r.costo_unit)||0, lote: r.lote || null, vencimiento: r.vencimiento || null, fecha: r.fecha || null, motivo: r.motivo || null, observaciones: r.observaciones || null, usuario: r.usuario || null }),
   caja_movimientos: (r) => ({ id: r.id, fecha: r.fecha || null, tipo: r.tipo, concepto: r.concepto || null, medio_pago: r.medioPago || r.medio_pago || null, importe: parseFloat(r.importe)||0, entidad_tipo: r.entidadTipo || r.entidad_tipo || null, entidad_id: r.entidadId || r.entidad_id || null, numero_recibo: r.numeroRecibo || r.numero_recibo || null, datos_extra: r.datosExtra || r.datos_extra || {}, estado: r.estado || 'pendiente', observaciones: r.observaciones || null, usuario: r.usuario || null }),
   caja_imputaciones: (r) => ({ id: r.id, movimiento_id: r.movimientoId || r.movimiento_id, comprobante_id: r.comprobanteId || r.comprobante_id, importe_imputado: parseFloat(r.importeImputado) || 0, fecha: r.fecha || null, usuario: r.usuario || null })
+app_users: (r) => ({ id: r.id, email: r.email, password: r.password, full_name: r.full_name || null, role: r.role || 'user', activo: r.activo !== false, permisos: r.permisos || {}, created_at: r.created_at || new Date().toISOString() })
 };
 
 const DB = {
@@ -4749,12 +4750,12 @@ async function loadFromSupabase() {
   console.log('=== CARGANDO DATOS DESDE SUPABASE ===');
   toast('Cargando datos desde Supabase...');
   try {
-    // 12 consultas en paralelo (10 originales + 2 de Caja)
+    // 13 consultas en paralelo (12 originales + app_users)
     const [
       clientesRes, proveedoresRes, vendedoresRes, productosRes,
       listasRes, stockRes, comprasRes, ventasRes,
       cuentasRes, movimientosRes,
-      cajaRes, cajaImpRes
+      cajaRes, cajaImpRes, usuariosRes
     ] = await Promise.all([
       supabaseClient.from('clientes').select('*').order('created_at', { ascending: false }),
       supabaseClient.from('proveedores').select('*').order('created_at', { ascending: false }),
@@ -4767,10 +4768,11 @@ async function loadFromSupabase() {
       supabaseClient.from('cuentas_corrientes').select('*').order('created_at', { ascending: false }),
       supabaseClient.from('movimientos_inventario').select('*').order('created_at', { ascending: false }),
       supabaseClient.from('caja_movimientos').select('*').order('created_at', { ascending: false }),
-      supabaseClient.from('caja_imputaciones').select('*').order('created_at', { ascending: false })
+      supabaseClient.from('caja_imputaciones').select('*').order('created_at', { ascending: false }),
+      supabaseClient.from('app_users').select('*').order('created_at', { ascending: false })
     ]);
     
-    // Validar errores de las 12 consultas
+    // Validar errores de las 13 consultas
     if (clientesRes.error) throw new Error('Clientes: ' + clientesRes.error.message);
     if (proveedoresRes.error) throw new Error('Proveedores: ' + proveedoresRes.error.message);
     if (vendedoresRes.error) throw new Error('Vendedores: ' + vendedoresRes.error.message);
@@ -4783,6 +4785,7 @@ async function loadFromSupabase() {
     if (movimientosRes.error) throw new Error('Movimientos: ' + movimientosRes.error.message);
     if (cajaRes.error) throw new Error('Caja: ' + cajaRes.error.message);
     if (cajaImpRes.error) throw new Error('Caja Imputaciones: ' + cajaImpRes.error.message);
+    if (usuariosRes.error) throw new Error('Usuarios: ' + usuariosRes.error.message);
     
     // Reemplazar state con datos de Supabase
     state = {
@@ -4802,10 +4805,41 @@ async function loadFromSupabase() {
       zonas: state.zonas || ['Zona Norte','Zona Sur','Zona Este','Zona Oeste','Centro','Interior']
     };
     
+    // ==========================================
+    // CARGAR Y SINCRONIZAR USUARIOS DESDE SUPABASE
+    // ==========================================
+    const usuariosSupabase = usuariosRes.data || [];
+    if (usuariosSupabase.length > 0) {
+      appUsers = usuariosSupabase.map(u => ({
+        id: u.id,
+        email: u.email,
+        password: u.password,
+        full_name: u.full_name || u.email.split('@')[0],
+        role: u.role || 'user',
+        activo: u.activo !== false,
+        permisos: u.permisos || (typeof getDefaultPerms === 'function' ? getDefaultPerms() : {}),
+        created_at: u.created_at
+      }));
+      saveUsers(); // Guardar en localStorage para que el login local funcione
+    } else if (appUsers.length === 0) {
+      // Fallback: si no hay usuarios en Supabase ni local, crear admin por defecto
+      appUsers = [{
+        id: uid(),
+        email: 'admin@gestcom.com',
+        password: 'admin123',
+        full_name: 'Administrador',
+        role: 'admin',
+        activo: true,
+        permisos: typeof getDefaultPerms === 'function' ? getDefaultPerms() : {},
+        created_at: new Date().toISOString()
+      }];
+      saveUsers();
+    }
+
     // Normalizar campos snake_case → camelCase
     state.stock.forEach(s => { if (s.producto_id && !s.productoId) s.productoId = s.producto_id; if (s.costo_unit !== undefined && s.costoUnit === undefined) s.costoUnit = s.costo_unit; });
 
-state.cuentas.forEach(c => { if (c.entity_id && !c.entityId) c.entityId = c.entity_id; if (c.tipo_comprobante && !c.tipoComprobante) c.tipoComprobante = c.tipo_comprobante; if (c.punto_venta && !c.puntoVenta) c.puntoVenta = c.punto_venta; if (c.otros_imp !== undefined && c.otrosImp === undefined) c.otrosImp = c.otros_imp; if (c.total !== undefined && c.total !== null) c.total = parseFloat(c.total)||0; if (c.ref_tipo && !c.refTipo) c.refTipo = c.ref_tipo; if (c.ref_id && !c.refId) c.refId = c.ref_id; if (c.va_libro_iva !== undefined) c.vaLibroIva = c.va_libro_iva === true || c.va_libro_iva === 't' || c.va_libro_iva === 'true'; if (c.tiene_productos !== undefined) c.tieneProductos = c.tiene_productos === true || c.tiene_productos === 't' || c.tiene_productos === 'true'; });
+    state.cuentas.forEach(c => { if (c.entity_id && !c.entityId) c.entityId = c.entity_id; if (c.tipo_comprobante && !c.tipoComprobante) c.tipoComprobante = c.tipo_comprobante; if (c.punto_venta && !c.puntoVenta) c.puntoVenta = c.punto_venta; if (c.otros_imp !== undefined && c.otrosImp === undefined) c.otrosImp = c.otros_imp; if (c.total !== undefined && c.total !== null) c.total = parseFloat(c.total)||0; if (c.ref_tipo && !c.refTipo) c.refTipo = c.ref_tipo; if (c.ref_id && !c.refId) c.refId = c.ref_id; if (c.va_libro_iva !== undefined) c.vaLibroIva = c.va_libro_iva === true || c.va_libro_iva === 't' || c.va_libro_iva === 'true'; if (c.tiene_productos !== undefined) c.tieneProductos = c.tiene_productos === true || c.tiene_productos === 't' || c.tiene_productos === 'true'; });
 
     state.movimientos.forEach(m => { if (m.producto_id && !m.productoId) m.productoId = m.producto_id; if (m.costo_unit !== undefined && m.costoUnit === undefined) m.costoUnit = m.costo_unit; });
     state.compras.forEach(c => { if (c.proveedor_id && !c.proveedorId) c.proveedorId = c.proveedor_id; });
@@ -4834,7 +4868,7 @@ state.cuentas.forEach(c => { if (c.entity_id && !c.entityId) c.entityId = c.enti
       if (i.importe_imputado !== undefined) i.importeImputado = i.importe_imputado;
     });
     
-    // Log completo de las 12 tablas
+    // Log completo de las 13 tablas
     console.log('Datos cargados desde Supabase:', {
       clientes: state.clientes.length,
       proveedores: state.proveedores.length,
@@ -4847,11 +4881,12 @@ state.cuentas.forEach(c => { if (c.entity_id && !c.entityId) c.entityId = c.enti
       cuentas: state.cuentas.length,
       movimientos: state.movimientos.length,
       caja: state.caja.length,
-      cajaImputaciones: state.cajaImputaciones.length
+      cajaImputaciones: state.cajaImputaciones.length,
+      usuarios: appUsers.length
     });
     
     saveLocal();
-    toast(`Datos cargados: ${state.clientes.length} clientes, ${state.productos.length} productos`, 'success');
+    toast(`Datos cargados: ${state.clientes.length} clientes, ${state.productos.length} productos, ${appUsers.length} usuarios`, 'success');
     if (currentModule && renderers[currentModule]) renderers[currentModule]();
     return true;
   } catch (error) {
