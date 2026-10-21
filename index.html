@@ -188,6 +188,14 @@ let mostrarAnulados = false;
 let comprobanteItems = [];
 let empresaData = { razonSocial: '', cuit: '', direccion: '', telefono: '', email: '', condicionIVA: '', logo: '' };
 
+// ============================================================
+// CONFIGURACIÓN DE AUTO-CONEXIÓN A SUPABASE
+// ============================================================
+const DEFAULT_SUPABASE_URL = 'https://hwosbnmavbmwhmiqibpn.supabase.co';
+const DEFAULT_SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imh3b3NibmF2Ym13aG1pcWlicG4iLCJyb2xlIjoiYW5vbiIsImlhdCI6MTc5MTc1MTYxOCwiZXhwIjoyMTA3MzI3NjE4fQ.OWTs18ASCgK2zte0xM-uoRmne0MYf_tDD9xG_LzDf9E';
+const SB_CONFIG_KEY = 'gestcom_supabase_config'; // La clave que usa tu SafeStorage
+
+
 const today = () => new Date().toISOString().split('T')[0];
 const fmt = n => '$' + Number(n||0).toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2});
 const genUUID = () => {
@@ -201,6 +209,29 @@ const genUUID = () => {
 };
 const uid = () => genUUID();
 const fmtDate = d => { if(!d) return '-'; const p = d.split('-'); return `${p[2]}/${p[1]}/${p[0]}`; };
+
+
+function initAutoConexion() {
+  try {
+    const cfgStr = SafeStorage.get(SB_CONFIG_KEY);
+    if (!cfgStr) {
+      console.log('⚙️ Configuración no encontrada. Aplicando valores por defecto...');
+      const defaultCfg = {
+        url: DEFAULT_SUPABASE_URL,
+        key: DEFAULT_SUPABASE_KEY
+      };
+      SafeStorage.set(SB_CONFIG_KEY, JSON.stringify(defaultCfg));
+      
+      // Intentar conectar inmediatamente si el objeto DB ya está disponible
+      if (typeof DB !== 'undefined' && typeof DB.init === 'function') {
+        DB.init(DEFAULT_SUPABASE_URL, DEFAULT_SUPABASE_KEY);
+      }
+    }
+  } catch (e) {
+    console.error('Error en auto-conexión:', e);
+  }
+} 
+
 
 // ============================================================
 // EDITAR Y ANULAR COMPROBANTES
@@ -4557,8 +4588,8 @@ renderers.conexion = () => {
       <div class="bg-white rounded-xl shadow p-6 mb-4">
         <h3 class="font-bold text-lg mb-4"><i class="fas fa-key text-emerald-600 mr-2"></i>Formulario de Conexión</h3>
         <div class="space-y-4">
-          <div><label class="block text-sm font-medium text-slate-700 mb-2">URL del Proyecto <span class="text-red-500">*</span></label><input id="connUrl" type="text" value="${cfg.url||''}" class="w-full px-4 py-2.5 border-2 rounded-lg font-mono text-sm" placeholder="https://xxxxxxxx.supabase.co"><p class="text-xs text-slate-500 mt-1">Obtener en: Supabase Dashboard → Settings → API → Project URL</p></div>
-          <div><label class="block text-sm font-medium text-slate-700 mb-2">Anon Key (Clave Pública) <span class="text-red-500">*</span></label><input id="connKey" type="password" value="${cfg.key||''}" class="w-full px-4 py-2.5 border-2 rounded-lg font-mono text-sm" placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6..."><p class="text-xs text-slate-500 mt-1">Obtener en: Supabase Dashboard → Settings → API → anon public</p></div>
+          <div><label class="block text-sm font-medium text-slate-700 mb-2">URL del Proyecto <span class="text-red-500">*</span></label><input id="connUrl" type="text" value="${cfg.url || DEFAULT_SUPABASE_URL}" class="w-full px-4 py-2.5 border-2 rounded-lg font-mono text-sm" placeholder="https://xxxxxxxx.supabase.co"><p class="text-xs text-slate-500 mt-1">Obtener en: Supabase Dashboard → Settings → API → Project URL</p></div>
+          <div><label class="block text-sm font-medium text-slate-700 mb-2">Anon Key (Clave Pública) <span class="text-red-500">*</span></label><input id="connKey" type="password" value="${cfg.key || DEFAULT_SUPABASE_KEY}" class="w-full px-4 py-2.5 border-2 rounded-lg font-mono text-sm" placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6..."><p class="text-xs text-slate-500 mt-1">Obtener en: Supabase Dashboard → Settings → API → anon public</p></div>
           <div id="connResult" class="hidden"></div>
           <div class="flex gap-3 pt-2">
             <button type="button" onclick="testConexion()" id="btnTestConn" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-lg font-medium shadow-lg"><i class="fas fa-vial mr-2"></i>Probar Conexión</button>
@@ -4595,13 +4626,8 @@ renderers.conexion = () => {
       <div class="bg-blue-50 border-2 border-blue-200 rounded-xl p-5">
         <h4 class="font-bold text-blue-900 mb-2"><i class="fas fa-info-circle mr-2"></i>Instrucciones</h4>
         <ol class="text-sm text-blue-800 space-y-2 list-decimal list-inside">
-          <li>Crear cuenta gratuita en <a href="https://supabase.com" target="_blank" class="underline font-semibold">supabase.com</a></li>
-          <li>Crear un nuevo proyecto y esperar a que se inicialice</li>
-          <li>Ir a <b>Settings → API</b> y copiar la <b>Project URL</b></li>
-          <li>Copiar la <b>anon public</b> key (NO la service_role)</li>
-          <li>Pegar ambos datos en el formulario de arriba</li>
-          <li>Hacer clic en <b>Probar Conexión</b> para verificar</li>
-          <li>Si es exitosa, hacer clic en <b>Guardar y Conectar</b></li>
+          <li>La aplicación está configurada para conectarse automáticamente a la base de datos.</li>
+          <li>Si necesita cambiar de proyecto, modifique los datos arriba y haga clic en <b>Guardar y Conectar</b>.</li>
         </ol>
       </div>
     </div>`;
@@ -5091,6 +5117,8 @@ function verPermisos(id) {
 // INICIALIZACIÓN
 // ============================================================
 loadLocal();
+// Ejecutar auto-conexión al iniciar la aplicación
+initAutoConexion();
 (async function restoreConexion() {
   try {
     const cfgStr = SafeStorage.get(SB_CONFIG_KEY);
